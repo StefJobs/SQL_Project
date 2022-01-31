@@ -1,0 +1,361 @@
+drop table IF EXISTS client;
+
+create table client 
+(
+	IDCLIENT_BRUT real primary key, 
+	CIVILITE varchar(10),
+	DATENAISSANCE timestamp,
+	MAGASIN varchar(15),
+	DATEDEBUTADHESION timestamp,
+	DATEREADHESION timestamp,
+	DATEFINADHESION timestamp,
+	VIP integer,
+	CODEINSEE varchar(10),
+	PAYS varchar(10)
+);
+
+COPY client FROM 'C:\Users\Public\CLIENT.csv' CSV HEADER delimiter '|' null '';
+
+---TRANSFORMATION IDCLIENT_BRUT
+ALTER TABLE client ADD IDCLIENT bigint;
+UPDATE client SET IDCLIENT =  CAST(IDCLIENT_BRUT AS bigint);
+ALTER TABLE client DROP IDCLIENT_BRUT;
+ALTER TABLE client ADD PRIMARY KEY (IDCLIENT);
+
+drop table IF EXISTS entete_ticket;
+create table entete_ticket 
+(
+	IDTICKET bigint primary key,
+	TIC_DATE timestamp,
+	MAG_CODE varchar(15),
+	IDCLIENT_BRUT real,
+	TIC_TOTALTTC_BRUT varchar(10) --money
+	
+);
+
+COPY entete_ticket FROM 'C:\Users\Public\ENTETES_TICKET_V4.CSV' CSV HEADER delimiter '|' null '';
+
+---TRANSFORMATION TIC_TOTALTTC_BRUT
+ALTER TABLE entete_ticket ADD TIC_TOTALTTC float;
+UPDATE entete_ticket SET TIC_TOTALTTC =  CAST(REPLACE(TIC_TOTALTTC_BRUT , ',', '.') AS float);
+ALTER TABLE entete_ticket DROP TIC_TOTALTTC_BRUT;
+
+---TRANSFORMATION IDCLIENT_BRUT
+ALTER TABLE entete_ticket ADD IDCLIENT bigint;
+UPDATE entete_ticket SET IDCLIENT =  CAST(IDCLIENT_BRUT AS bigint); --EXECUTER ELLE
+ALTER TABLE entete_ticket DROP IDCLIENT_BRUT;
+
+
+---__________
+
+drop table IF EXISTS lignes_ticket;
+create table lignes_ticket 
+(
+	IDTICKET bigint,
+	NUMLIGNETICKET integer,
+	IDARTICLE varchar(15), --ligne avec 'COUPON'
+	QUANTITE_BRUT varchar(15),
+	MONTANTREMISE_BRUT varchar(15),
+	TOTAL_BRUT varchar(15),
+	MARGESORTIE_BRUT varchar(15)
+);
+
+
+COPY lignes_ticket FROM 'C:\Users\Public\LIGNES_TICKET_V4.CSV' CSV HEADER delimiter '|' null '';
+
+---TRANSFORMATION QUANTITE_BRUT
+
+ALTER TABLE lignes_ticket ADD QUANTITE float;
+UPDATE lignes_ticket SET QUANTITE =  CAST(REPLACE(QUANTITE_BRUT , ',', '.') AS float);
+ALTER TABLE lignes_ticket DROP QUANTITE_BRUT;
+
+---TRANSFORMATION MONTANTREMISE_BRUT
+ALTER TABLE lignes_ticket ADD MONTANTREMISE float;
+UPDATE lignes_ticket SET MONTANTREMISE =  CAST(REPLACE(MONTANTREMISE_BRUT , ',', '.') AS float);
+ALTER TABLE lignes_ticket DROP MONTANTREMISE_BRUT;
+
+---TRANSFORMATION TOTAL_BRUT
+ALTER TABLE lignes_ticket ADD TOTAL float;
+UPDATE lignes_ticket SET TOTAL =  CAST(REPLACE(TOTAL_BRUT , ',', '.') AS float);
+ALTER TABLE lignes_ticket DROP TOTAL_BRUT;
+
+---TRANSFORMATION MARGESORTIE_BRUT
+ALTER TABLE lignes_ticket ADD MARGESORTIE float;
+UPDATE lignes_ticket SET MARGESORTIE =  CAST(REPLACE(MARGESORTIE_BRUT , ',', '.') AS float);
+ALTER TABLE lignes_ticket DROP MARGESORTIE_BRUT;
+
+select * from lignes_ticket order by idticket limit 10;
+
+drop table IF EXISTS ref_magasin;
+create table ref_magasin 
+(
+	CODESOCIETE varchar(15) primary key,
+	VILLE varchar(50),
+	LIBELLEDEPARTEMENT integer,
+	LIBELLEREGIONCOMMERCIALE varchar(15)
+);
+
+COPY ref_magasin FROM 'C:\Users\Public\REF_MAGASIN.CSV' CSV HEADER delimiter '|' null '';
+
+drop table IF EXISTS ref_article;
+create table ref_article 
+(
+	CODEARTICLE varchar(15) primary key,
+	CODEUNIVERS varchar(15),
+	CODEFAMILLE varchar(15),
+	CODESOUSFAMILLE varchar(15)
+);
+
+COPY ref_article FROM 'C:\Users\Public\REF_ARTICLE.CSV' CSV HEADER delimiter '|' null '';
+
+--Etude Globale 1
+
+ALTER TABLE client
+ADD type_client VARCHAR(20);
+
+UPDATE client
+SET type_client = 
+CASE
+WHEN vip = 1 THEN 'VIP'
+WHEN datedebutadhesion BETWEEN '2016-01-01 00:00:00' AND '2016-12-31 00:00:00' THEN 'NEW_N2'
+WHEN datedebutadhesion BETWEEN '2017-01-01 00:00:00' AND '2017-12-31 00:00:00' THEN 'NEW_N1'
+WHEN datefinadhesion > '2018-01-01 00:00:00' THEN 'ADHERENT'
+WHEN datefinadhesion < '2018-01-01 00:00:00' THEN 'CHURNER'
+END;
+
+-- Question B
+
+create table CA_Global as (select sum(tic_totalttc) as CA, client.idclient,
+extract(year from tic_date) as annee 
+from client 
+inner join entete_ticket
+on client.idclient = entete_ticket.idclient
+group by client.idclient, annee);
+
+
+
+-- Question C
+
+select distinct(civilite) from client;
+
+-- Transformation des civilités
+ALTER TABLE client ADD civilite_new varchar(10);
+UPDATE client set civilite_new = (case 
+					when civilite in ('Mr','monsieur','MONSIEUR') then 'Monsieur'
+					when civilite in ('Mme','madame','MADAME') then 'Madame'
+					else null
+	end);
+select distinct(civilite_new) from client;
+alter table client drop column civilite;
+alter table client RENAME COLUMN civilite_new TO civilite;
+select * from client;
+
+-- Création colonne sexe 
+
+ALTER TABLE client ADD sexe varchar(10);
+UPDATE client set sexe = (case 
+					when civilite = 'Monsieur' then 'Masculin'
+					when civilite = 'Madame' then 'Feminin'
+					else null
+	end);
+	
+-- Création colonne Age
+ALTER TABLE client ADD AGE integer;
+update client set age = DATE_PART('year',current_date) - DATE_PART('year', datenaissance);
+
+Select * from client LIMIT 5;
+
+---ETUDE PAR MAGASIN 2 A---
+
+--On créé la nouvelle table avec toutes les infos demandées
+
+CREATE TABLE etude_mag as (
+
+SELECT codesociete, COUNT(DISTINCT client.idclient) as NB_CLIENT, 
+
+-- On compte les IDCLIENT répondants aux critères d'activité (soit une adhésion valable durant 2016 et/ou 2017)
+
+COUNT(DISTINCT
+	CASE 
+	WHEN (extract(year from client.datedebutadhesion) <= 2016 
+	OR extract(year from client.datereadhesion) <= 2016)
+	AND (extract(year from client.datefinadhesion) >= 2016 
+	OR extract(year from client.datefinadhesion) IS NULL) THEN client.idclient ELSE NULL
+	END) as NBCLIENT_2016,
+COUNT(DISTINCT
+	CASE 
+	WHEN (extract(year from client.datedebutadhesion) <= 2017 
+	OR extract(year from client.datereadhesion) <= 2017)
+	AND (extract(year from client.datefinadhesion) >= 2017 
+	OR extract(year from client.datefinadhesion) IS NULL) THEN client.idclient ELSE NULL
+	END) as NBCLIENT_2017 ,	
+
+-- On fait une somme des TTc Tickets pour chaque année
+
+SUM( CASE
+	WHEN extract(year from entete_ticket.tic_date) = 2016
+	THEN entete_ticket.tic_totalttc
+	END) as TTC_2016 ,
+SUM( CASE
+	WHEN extract(year from entete_ticket.tic_date) = 2017
+	THEN entete_ticket.tic_totalttc
+	END) as TTC_2017,
+	
+-- On créé des colonnes vides au format Décimal (d'où le 0.0) afin de pouvoir insérer les formules par la suite
+	
+0.0 as TAUX_EVO_NBCLIENT, 0.0 as EVO_TTC , 'evo' as EVOLUTION
+FROM ref_magasin 
+LEFT JOIN client ON ref_magasin.CODESOCIETE = client.MAGASIN
+LEFT JOIN entete_ticket ON client.MAGASIN = entete_ticket.mag_code
+AND client.idclient = entete_ticket.idclient
+GROUP BY ref_magasin.codesociete) ;
+
+-- On remplis les colonnes vides à l'aide des conditionnelles demandées
+-- Le résultat de Taux evo est à interpréter en % -rajouter % après le chiffre)
+
+UPDATE etude_mag 
+SET 
+TAUX_EVO_NBCLIENT = cast(((NBCLIENT_2017 - NBCLIENT_2016)* 100.0 / NBCLIENT_2016) as decimal(100,2)) , 
+EVO_TTC = (TTC_2017 - TTC_2016) 
+;
+
+
+-- PS: En cas de 0 dans les deux colonnes, l'évolution sera notée "Moyenne"
+
+
+UPDATE etude_mag 
+SET 
+EVOLUTION = CASE 
+	WHEN TAUX_EVO_NBCLIENT > 0 AND EVO_TTC > 0 THEN 'Bon'
+	WHEN TAUX_EVO_NBCLIENT <= 0 AND EVO_TTC >= 0 THEN 'Moyen'
+	WHEN TAUX_EVO_NBCLIENT >= 0 AND EVO_TTC <= 0 THEN 'Moyen'
+	WHEN TAUX_EVO_NBCLIENT < 0 AND EVO_TTC < 0 THEN 'Mauvais'
+	END ;
+
+SELECT * FROM etude_mag ;
+
+
+
+--- ETUDE PAR MAGASIN 2B ---
+
+-- On créé une table avec les données des Lat/Long des villes, ainsi qu'avec les données permettant la jointure (insee, departe, commune)
+
+CREATE TABLE geo
+(INSEE VARCHAR(10),
+COMMUNE VARCHAR(50),
+Departement VARCHAR(50),
+lat Numeric ,
+long Numeric);
+
+ALTER TABLE ref_magasin ALTER COLUMN libelledepartement TYPE VARCHAR(50);
+
+-- On créé une table réunissant les clients, les mag des clients et les long/lat des clients/mag
+
+create table client_geo as
+(SELECT idclient , magasin, codeinsee, geo.lat , geo.long FROM client
+LEFT JOIN geo ON client.codeinsee = geo.insee);
+
+
+create table magasin_geo as
+(SELECT codesociete, ville, geo.lat , geo.long FROM ref_magasin
+LEFT JOIN geo ON  ref_magasin.ville = geo.commune
+AND ref_magasin.libelledepartement = geo.departement );
+
+
+CREATE TABLE client_mag_geo AS
+(SELECT distinct idclient  , magasin, client_geo.lat as lat_client , client_geo.long as long_client, magasin_geo.lat as lat_mag, magasin_geo.long as long_mag
+FROM client_geo LEFT JOIN magasin_geo ON
+client_geo.magasin = magasin_geo.codesociete)
+;
+
+
+-- La table avec les localisations mag et client 
+
+select * from client_mag_geo;
+
+-- On créé une fonction permettant de calculer des distances à partir de la géolocalisation des 2 points
+
+
+CREATE OR REPLACE FUNCTION calculate_KM_distance(lat1 float, lon1 float, lat2 float, lon2 float)
+RETURNS float AS $distance$ 
+DECLARE 
+	distance float = 0;
+	radlat1 float;
+	radlat2 float;
+  adlat2 float;
+  theta float;
+  radtheta float;
+BEGIN
+	IF lat1 = lat2 OR lon1 = lon2
+  	THEN RETURN distance;
+  ELSE
+  		radlat1 = pi() * lat1 / 180;
+  	radlat2 = pi() * lat2 / 180;
+    theta = lon1 - lon2;
+    radtheta = pi() * theta / 180;
+    distance = sin(radlat1) * sin(radlat2) + cos(radlat1) * cos(radlat2) * cos(radtheta);
+    IF distance > 1 THEN distance = 1;
+		END IF;
+    distance = acos(distance);
+    distance = distance * 180 / pi();
+    distance = distance * 60 * 1.1515;
+    distance = distance * 1.609344 ;
+    RETURN distance;
+   END IF;
+END;
+$distance$ LANGUAGE plpgsql;
+
+-- On créé une colonne appliquant la dite fonction
+
+ALTER TABLE client_mag_geo ADD COLUMN Distance numeric;
+
+UPDATE client_mag_geo SET 
+Distance = calculate_KM_distance(lat_client,long_client,lat_mag, long_mag);
+
+SELECT * FROM client_mag_geo ;
+
+-- Après vérification la fonction est OK, les distances de la colonne "Distance" correspondent à la réalité
+
+--Question 3.a)
+--Création de 2 tables temporaire pour l'année N-1 et l'année N-2
+with N_1 as (
+Select ra.codeunivers as cu1, sum(total) as sumN1 
+	from lignes_ticket lt
+left join entete_ticket et on et.idticket = lt.idticket
+left join ref_article ra on ra.codearticle = lt.idarticle
+where EXTRACT(YEAR FROM et.tic_date) = '2017' 
+GROUP BY ra.codeunivers)
+ , N_2 as (
+Select ra2.codeunivers as cu2, sum(total) as sumN2 
+	 from lignes_ticket lt2
+left join entete_ticket et on et.idticket = lt2.idticket
+left join ref_article ra2 on ra2.codearticle = lt2.idarticle
+where EXTRACT(YEAR FROM tic_date) = '2016' 
+GROUP BY ra2.codeunivers)
+--Affichage des données des deux tables et de la variation des CA
+ Select cu1, sumN1, sumN2,(sumN1 - sumN2) as variation
+ from N_1, N_2
+ where cu1 = cu2
+-- on enlève les coupons
+AND cu1 != 'COUPON'
+ group by cu1, cu2, sumN1, sumN2 ;
+
+
+
+--Question 3.b)
+--Création de rank pour permettre le regroupage par univers  du top 5 famille (dans cette exemple seul  U1 a au moins 5 famille différentes avec marges et CA il est donc le seul  où l'ont peut  voir le regroupement sur un TOP5 effectif)
+SELECT rank_filter.* FROM (
+       select ra.codeunivers as cu, ra.codefamille as cf,  sum(lt.margesortie) as Marge,
+	rank() OVER (Partition By ra.codeunivers Order by sum(lt.margesortie) DESC)
+	from  lignes_ticket lt
+	left join entete_ticket et on et.idticket = lt.idticket
+	left join ref_article ra on ra.codearticle = lt.idarticle
+	-- On enlève les coupons
+	where ra.codeunivers != 'COUPON'
+	group by ra.codeunivers, cf
+	order by ra.codeunivers, cf , rank
+    )rank_filter 
+--Sélection le nombre de rang par groupe
+WHERE RANK <= 5 ;
+
+
